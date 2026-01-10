@@ -21,8 +21,8 @@ import requests
 BASE_URL = "http://139.99.208.63/ints"
 DATA_URL = "http://139.99.208.63/ints/agent/res/data_smscdr.php"
 
-BOT_TOKEN = "7448362382:AAGzYcF4XH5cAOIOsrvJ6E9MXqjnmOdKs2o"
-CHAT_IDS = ["-1003140739791"]
+BOT_TOKEN = "8590560352:AAEFigRl3obPJUqlw6iIGC7-Cdd9RmtFRmw"
+CHAT_IDS = ["-1003053441379"]
 
 PHPSESSID = "a8fe5ff6a3e21cbb9c02937a436fa9c7"
 POLL_INTERVAL = 15  # seconds
