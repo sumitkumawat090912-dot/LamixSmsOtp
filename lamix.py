@@ -7,6 +7,7 @@ INTS OTP Forwarder - LIVE ONLY VERSION
 • Only LIVE / NEW OTP forward ✅
 • Restart-safe (no old spam)
 • Premium Telegram style
+• Updated: Inline buttons + banner image in OTP messages only
 """
 
 import time
@@ -26,6 +27,24 @@ CHAT_IDS = ["-1003053441379"]
 
 PHPSESSID = "a8fe5ff6a3e21cbb9c02937a436fa9c7"
 POLL_INTERVAL = 15  # seconds
+
+# ================= BANNER & BUTTONS =================
+BANNER_URL = "https://files.catbox.moe/vox5fl.jpg"
+
+# The requested inline keyboard structure
+INLINE_KEYBOARD = {
+    "inline_keyboard": [
+        [
+            {"text": "NUMBER CHANNEL", "url": "https://t.me/auroratechinc"},
+            {"text": "BACKUP CHANNEL", "url": "https://t.me/mrafrixtech"},
+        ],
+        [
+            {"text": "OTP GROUP", "url": "https://t.me/afrixotpgc"},
+            {"text": "CONTACT OWNER", "url": "https://t.me/mrafrix"},
+            {"text": "AFRIX TECH", "url": "https://t.me/jaden_afrix"},
+        ]
+    ]
+}
 
 # ================= LOGGING =================
 logging.basicConfig(
@@ -55,20 +74,26 @@ OTP_PATTERNS = [
 seen_messages = set()
 initialized = False  # 🔒 first run lock
 
-# ================= TELEGRAM SEND =================
-def send_telegram(text: str):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+# ================= TELEGRAM SEND (OTP MESSAGE) =================
+def send_telegram_otp(text: str):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+    photo_bytes = requests.get(BANNER_URL).content
     for cid in CHAT_IDS:
-        requests.post(
-            url,
-            data={
-                "chat_id": cid,
-                "text": text,
-                "parse_mode": "Markdown",
-                "disable_web_page_preview": True,
-            },
-            timeout=10,
-        )
+        try:
+            requests.post(
+                url,
+                data={
+                    "chat_id": cid,
+                    "caption": text,
+                    "parse_mode": "Markdown",
+                    "disable_web_page_preview": True,
+                    "reply_markup": str(INLINE_KEYBOARD).replace("'", '"')
+                },
+                files={"photo": ("banner.jpg", photo_bytes)},
+                timeout=15,
+            )
+        except Exception as e:
+            log.warning("Failed to send telegram OTP message: %s", e)
 
 # ================= OTP EXTRACT =================
 def extract_otp(message: str):
@@ -121,10 +146,10 @@ def parse_row(row):
 
     return ts, operator, str(number), service, message, otp
 
-# ================= MESSAGE STYLE =================
+# ================= MESSAGE STYLE (OTP) =================
 def build_message(ts, number, otp, service, operator, message):
     return (
-        f"🔐 *NEW OTP RECEIVED* 🔐\n"
+        f"*🔐 NEW OTP RECEIVED 🔐*\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"⏰ *TIME*\n"
         f"┗ `{ts}`\n\n"
@@ -176,7 +201,8 @@ def main():
                 message=message,
             )
 
-            send_telegram(text)
+            # Only OTP messages get banner and buttons
+            send_telegram_otp(text)
             seen_messages.add(msg_id)
             log.info("📤 Live OTP forwarded: %s", otp)
 
