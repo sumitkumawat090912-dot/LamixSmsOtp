@@ -1,3 +1,61 @@
+# imghdr shim: provide imghdr.what() using Pillow if the stdlib imghdr module is missing.
+# This must be at the very top so any downstream imports using imghdr find it.
+import sys
+try:
+    import imghdr  # try standard library first
+except ModuleNotFoundError:
+    try:
+        from PIL import Image
+    except Exception as e:
+        raise RuntimeError("Pillow is required as a fallback for imghdr. Add 'Pillow' to requirements.txt.") from e
+    import types
+    import io as _io
+    def _what(file, h=None):
+        try:
+            # determine bytes to inspect
+            if h is not None:
+                data = h
+            else:
+                # file can be a path or file-like object
+                if isinstance(file, (str, bytes, bytearray)):
+                    # treat as filename/path
+                    with open(file, "rb") as f:
+                        data = f.read(64)
+                elif hasattr(file, "read"):
+                    pos = None
+                    try:
+                        pos = file.tell()
+                    except Exception:
+                        pos = None
+                    data = file.read(64)
+                    if pos is not None:
+                        try:
+                            file.seek(pos)
+                        except Exception:
+                            pass
+                else:
+                    return None
+            if not isinstance(data, (bytes, bytearray)):
+                return None
+            img = Image.open(_io.BytesIO(data))
+            fmt = (img.format or "").lower()
+            # return common imghdr type names
+            mapping = {
+                "jpeg": "jpeg",
+                "png": "png",
+                "gif": "gif",
+                "bmp": "bmp",
+                "webp": "webp",
+                "tiff": "tiff",
+            }
+            return mapping.get(fmt)
+        except Exception:
+            return None
+    mod = types.ModuleType("imghdr")
+    mod.what = _what
+    sys.modules["imghdr"] = mod
+    imghdr = mod
+
 import logging
 import sqlite3
 import time
@@ -101,7 +159,7 @@ USER_STATE = {}
 COUNTRY_CODES = {
     '1': ('USA/Canada', '🇺🇸', 'US'), '7': ('Russia', '🇷🇺', 'RU'), '20': ('Egypt', '🇪🇬', 'EG'), '27': ('South Africa', '🇿🇦', 'ZA'),
     '30': ('Greece', '🇬🇷', 'GR'), '31': ('Netherlands', '🇳🇱', 'NL'), '32': ('Belgium', '🇧🇪', 'BE'), '33': ('France', '🇫🇷', 'FR'),
-    '34': ('Spain', '🇪🇸', 'ES'), '36': ('Hungary', '🇭🇺', 'HU'), '39': ('Italy', '🇮🇹', 'IT'), '40': ('Romania', '🇷🇴', 'RO'),
+    '34': ('Spain', '🇪🇸', 'ES'), '36': ('Hungary', '🇭🇺', 'HU'), '39': ('Italy', '🇮����', 'IT'), '40': ('Romania', '🇷🇴', 'RO'),
     '41': ('Switzerland', '🇨🇭', 'CH'), '43': ('Austria', '🇦🇹', 'AT'), '44': ('United Kingdom', '🇬🇧', 'GB'), '45': ('Denmark', '🇩🇰', 'DK'),
     '46': ('Sweden', '🇸🇪', 'SE'), '47': ('Norway', '🇳🇴', 'NO'), '48': ('Poland', '🇵🇱', 'PL'), '49': ('Germany', '🇩🇪', 'DE'),
     '51': ('Peru', '🇵🇪', 'PE'), '52': ('Mexico', '🇲🇽', 'MX'), '53': ('Cuba', '🇨🇺', 'CU'), '54': ('Argentina', '🇦🇷', 'AR'),
