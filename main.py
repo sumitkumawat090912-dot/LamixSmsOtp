@@ -44,8 +44,8 @@ logger = logging.getLogger(__name__)
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-API_TOKEN = "8435536868:AAHnd3pnzFybjyDBTkMp6TILffjzvL7g5ds"
-ADMIN_IDS = [7799287105, 8365961338]
+API_TOKEN = "8531523678:AAFXHiumK5Ho8dyuPneq7i_k_h8xFPl1jck"
+ADMIN_IDS = [7500869913, 8365961338]
 
 # --- Api 1
 T1 = "YOUR_PANEL_API"
