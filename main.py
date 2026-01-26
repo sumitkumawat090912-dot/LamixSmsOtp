@@ -1,6 +1,7 @@
 # imghdr shim: provide imghdr.what() using Pillow if the stdlib imghdr module is missing.
 # This must be at the very top so any downstream imports using imghdr find it.
 import sys
+import os
 try:
     import imghdr  # try standard library first
 except ModuleNotFoundError:
@@ -59,10 +60,8 @@ except ModuleNotFoundError:
 import logging
 import sqlite3
 import time
-import os
 import re
 import threading
-import sys
 import requests
 import hashlib
 import random
@@ -72,12 +71,10 @@ import asyncio
 from datetime import datetime, timedelta
 from io import BytesIO
 from bs4 import BeautifulSoup
-from telegram import CopyTextButton
 import json
 
 # ---- PTB Imports ----
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
-
 from telegram.constants import ParseMode
 from telegram.ext import (
     ApplicationBuilder,
@@ -89,6 +86,10 @@ from telegram.ext import (
 )
 from telegram.error import BadRequest
 
+# ---- PORT Configuration for Render ----
+PORT = int(os.environ.get('PORT', 8443))
+BOT_WEBHOOK_URL = os.environ.get('BOT_WEBHOOK_URL', '')
+
 # ---- Main Configuration ----
 BOT_NAME = "MaLiKoTpZoNe"
 DB_FILE = "numbers.db"
@@ -99,7 +100,6 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 API_TOKEN = "8531523678:AAFXHiumK5Ho8dyuPneq7i_k_h8xFPl1jck"
@@ -159,7 +159,7 @@ USER_STATE = {}
 COUNTRY_CODES = {
     '1': ('USA/Canada', '🇺🇸', 'US'), '7': ('Russia', '🇷🇺', 'RU'), '20': ('Egypt', '🇪🇬', 'EG'), '27': ('South Africa', '🇿🇦', 'ZA'),
     '30': ('Greece', '🇬🇷', 'GR'), '31': ('Netherlands', '🇳🇱', 'NL'), '32': ('Belgium', '🇧🇪', 'BE'), '33': ('France', '🇫🇷', 'FR'),
-    '34': ('Spain', '🇪🇸', 'ES'), '36': ('Hungary', '🇭🇺', 'HU'), '39': ('Italy', '🇮����', 'IT'), '40': ('Romania', '🇷🇴', 'RO'),
+    '34': ('Spain', '🇪🇸', 'ES'), '36': ('Hungary', '🇭🇺', 'HU'), '39': ('Italy', '🇮🇹', 'IT'), '40': ('Romania', '🇷🇴', 'RO'),
     '41': ('Switzerland', '🇨🇭', 'CH'), '43': ('Austria', '🇦🇹', 'AT'), '44': ('United Kingdom', '🇬🇧', 'GB'), '45': ('Denmark', '🇩🇰', 'DK'),
     '46': ('Sweden', '🇸🇪', 'SE'), '47': ('Norway', '🇳🇴', 'NO'), '48': ('Poland', '🇵🇱', 'PL'), '49': ('Germany', '🇩🇪', 'DE'),
     '51': ('Peru', '🇵🇪', 'PE'), '52': ('Mexico', '🇲🇽', 'MX'), '53': ('Cuba', '🇨🇺', 'CU'), '54': ('Argentina', '🇦🇷', 'AR'),
@@ -240,11 +240,10 @@ class Database:
         with cls._lock:
             c = cls._connection.cursor()
             
-            # Perbaikan: Tambahkan balance REAL DEFAULT 0.0 di skema tabel users
             c.execute('''CREATE TABLE IF NOT EXISTS users
                          (user_id INTEGER PRIMARY KEY, username TEXT, first_name TEXT, 
                          last_name TEXT, join_date TEXT, is_banned INTEGER DEFAULT 0,
-                         balance REAL DEFAULT 0.0)''')
+                         balance REAL DEFAULT 0.0, total_earned REAL DEFAULT 0.0)''')
             
             c.execute('''CREATE TABLE IF NOT EXISTS numbers
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, country TEXT, number TEXT UNIQUE, 
@@ -300,35 +299,19 @@ class Database:
             
             c.execute('''INSERT OR IGNORE INTO settings (id, otp_reward, ref_reward) 
                          VALUES (1, 0.003, 0.0100)''')
-            c.execute('''CREATE TABLE IF NOT EXISTS users
-                         (user_id INTEGER PRIMARY KEY, username TEXT, first_name TEXT, 
-                         last_name TEXT, join_date TEXT, is_banned INTEGER DEFAULT 0,
-                         balance REAL DEFAULT 0.0, total_earned REAL DEFAULT 0.0)''')
+            
             c.execute("PRAGMA table_info(users)")
             columns = [column[1] for column in c.fetchall()]
             
             if 'balance' not in columns:
                 c.execute("ALTER TABLE users ADD COLUMN balance REAL DEFAULT 0.0")
-                logger.info("✅  The 'balance' column was successfully added automatically..")
+                logger.info("✅ The 'balance' column was successfully added automatically..")
                 
             if 'total_earned' not in columns:
                 c.execute("ALTER TABLE users ADD COLUMN total_earned REAL DEFAULT 0.0")
                 logger.info("✅ The 'total_earned' column was successfully added automatically..")
 
-            c.execute('''CREATE TABLE IF NOT EXISTS numbers
-                         (id INTEGER PRIMARY KEY AUTOINCREMENT, country TEXT, number TEXT UNIQUE, 
-                         is_used INTEGER DEFAULT 0, used_by INTEGER, use_date TEXT)''')
             cls._connection.commit()
-
-    @classmethod
-    def migrate_db(cls):
-        """Ensures balance column exists without deleting existing data."""
-        with cls._lock:
-            try:
-                cls._connection.execute("ALTER TABLE users ADD COLUMN balance REAL DEFAULT 0.0")
-                cls._connection.commit()
-            except sqlite3.OperationalError:
-                pass # Kolom sudah ada
 
     @classmethod
     def execute(cls, query, params=()):
@@ -350,14 +333,12 @@ class Database:
 
 db = Database()
 
-
 def setup_statistics_db():
     db.execute('''CREATE TABLE IF NOT EXISTS otp_stats (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         country TEXT,
         service TEXT,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        
     )''')
     
 # === Helper Functions ===
@@ -380,6 +361,7 @@ def load_already_sent(username):
         with open(filename, "r") as f:
             return set(json.load(f))
     return set()
+
 async def login(session, username, password, base_url):
     try:
         login_page = f"{base_url.rstrip('/')}/ints/login"
@@ -416,9 +398,7 @@ def build_api_url(endpoint_url):
 
 def fetch_data(session, base_url):
     data_url = f"{base_url.rstrip('/')}/ints/client/res/data_smscdr.php"
-
     url = build_api_url(data_url) 
-    
     headers = {"X-Requested-With": "XMLHttpRequest"}
     try:
         response = session.get(url, headers=headers, timeout=10)
@@ -429,8 +409,6 @@ def fetch_data(session, base_url):
         return None
     except Exception:
         return None
-
-
 
 def get_traffic_report(period='day'):
     if period == 'day':
@@ -514,12 +492,12 @@ def get_short_service(sender_name):
     if "FACEBOOK" in name: return "FB"
     if "GOOGLE" in name: return "GO"
     if "TELEGRAM" in name: return "TG"
-    if "Instagram" in name: return "IG"
+    if "INSTAGRAM" in name: return "IG"
     if "TIKTOK" in name: return "TT"
     if "BITGET" in name: return "BG"
     if "APPLE" in name: return "AP"
-
     return name[:2]
+
 def detect_service(sender_name, message_text):
     full_text = (str(sender_name) + " " + str(message_text)).lower()
     services = ['whatsapp', 'facebook', 'google', 'telegram', 'instagram', 'discord', 'twitter', 'snapchat', 'imo', 'tiktok']
@@ -544,25 +522,20 @@ def send_async_message(chat_id, text, parse_mode=None, reply_markup=None, auto_d
             except Exception as error:
                 print(f"❌ Failed to send to {chat_id}: {error}")
 
-        asyncio.run_coroutine_threadsafe(sending(), MAIN_LOOP)
+        try:
+            asyncio.run_coroutine_threadsafe(sending(), MAIN_LOOP)
+        except Exception as e:
+            print(f"⚠️ Error scheduling message: {e}")
     else:
         print("⏳ Waiting for bot to be ready before sending message...")
-
-      
-        
 
 # --- PUBLIC BROADCAST NOTIFICATION ---
 def format_public_message(recipient_number, sender_name, message, otp, sms_time, masked_num):
     main_ch, _, _, otp_ch = get_channel_settings()
     country_name, country_flag, country_iso = get_country_info(recipient_number)
     service_name = detect_service(sender_name, message)
-    
-    country_name, country_flag, country_iso = get_country_info(recipient_number)
     short_cli = get_short_service(sender_name)
     
-    full_service = detect_service(sender_name, message)
-
-
     otp_digit_match = re.search(r'\d{5,8}', str(otp))
     clean_otp = otp_digit_match.group(0) if otp_digit_match else "N/A"
     
@@ -576,21 +549,19 @@ def format_public_message(recipient_number, sender_name, message, otp, sms_time,
     
     message_text = (
         f"{header_line}\n rilzz chaniago team"
-
     )
     
     keyboard = [
         [
-
             InlineKeyboardButton(
                 text=f"{clean_otp}", 
-                copy_text=CopyTextButton(text=clean_otp)
+                callback_data="copy_otp"
             )
        ],
        [
             InlineKeyboardButton(
                 text="Full Message",
-                copy_text=CopyTextButton(text=message)
+                callback_data="copy_msg"
             )
         ],
         [
@@ -602,6 +573,7 @@ def format_public_message(recipient_number, sender_name, message, otp, sms_time,
     markup = InlineKeyboardMarkup(keyboard)
     
     return message_text, markup
+
 # --- PRIVATE NOTIFICATION
 def format_private_message(recipient_number, message, otp, current_balance, reward_amount):
     country_info = get_country_info(recipient_number)
@@ -668,7 +640,6 @@ def start_watching_sms_api(api_url, token, source_label, api_type):
     
     while not stop_event.is_set():
         try:
-
             response = requests.get(api_url, params={'token': token, 'records': 200}, timeout=30)
             
             if response.status_code != 200:
@@ -696,7 +667,6 @@ def start_watching_sms_api(api_url, token, source_label, api_type):
 
             for item in reversed(sms_list):
                 try:
-                
                     if isinstance(item, dict):
                         dt = item.get("dt") or item.get("date")
                         rc = item.get("num") or item.get("number")
@@ -773,7 +743,6 @@ def start_watching_sms_api(api_url, token, source_label, api_type):
                     text, markup = format_public_message(rc, sn, msg, otp, dt, masked)
                     
                     try:
-
                         _, _, _, otp_ch = get_channel_settings()
                         send_async_message(otp_ch, text, parse_mode=ParseMode.HTML, reply_markup=markup, auto_delete=True)
 
@@ -821,7 +790,6 @@ async def silent_auto_delete(chat_id, message_id, delay=120):
             await GLOBAL_APP.bot.delete_message(chat_id=chat_id, message_id=message_id)
             print(f"[*] [AUTO-DELETE] Message {message_id} removed from {chat_id}")
     except Exception as e:
-
         print(f"[!] [AUTO-DELETE] Failed to delete message {message_id}: {e}")
         
 async def traffic_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -831,11 +799,7 @@ async def traffic_user_command(update: Update, context: ContextTypes.DEFAULT_TYP
         if not is_member:
             await update.message.reply_text("❌ Join channel first to see traffic.")
             return
-    is_member = await check_membership(update.effective_user.id, context)
-    if not is_member:
-        await update.message.reply_text("❌ Join channel first to see traffic.")
-        return
-        
+    
     report = get_traffic_report(period='day')
     await update.message.reply_text(report, parse_mode=ParseMode.MARKDOWN)
 
@@ -866,7 +830,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("✅ Check Membership", callback_data="check_membership")]
         ]
         await context.bot.send_message(chat_id, 
-            f"❌ You need to join our channels first!\n\nMain: {main_ch}\nBackup",
+            f"❌ You need to join our channels first!\n\nMain: {main_ch}\nBackup: {backup_link}",
             reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
@@ -955,7 +919,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Process Logic
         if data.startswith("change_"):
             old = db.execute("SELECT number FROM numbers WHERE country = ? AND used_by = ? ORDER BY use_date DESC LIMIT 1", (country, user_id)).fetchone()
-            if old: db.execute("UPDATE numbers SET his_used = 2 WHERE number = ?", (old[0],))
+            if old: db.execute("UPDATE numbers SET is_used = 2 WHERE number = ?", (old[0],))
         
         number = res[0]
         db.execute("UPDATE numbers SET is_used = 1, used_by = ?, use_date = ? WHERE number = ?",
@@ -977,14 +941,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("⬅️ Back", callback_data="back_to_countries")]
         ]
         
-        msg_text = f"✅ Your {country} Number:\n`{number}`\n`{number}`\n`{number}`\n\nTap to copy. Wait for SMS."
+        msg_text = f"✅ Your {country} Number:\n`{number}`\n\nTap to copy. Wait for SMS."
         await query.message.edit_text(msg_text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
     if data == "back_to_countries":
         await show_main_menu(update, context)
         return
-        # --- Logika Withdraw ---
+
     if data == "wd_start":
         res = db.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,)).fetchone()
         balance = res['balance'] if res else 0.0
@@ -1002,11 +966,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                       reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
-   
-        # --- Handler untuk Input Ala
-        # Ambil data balance user l
-
-
     # --- ADMIN ACTIONS ---
     if user_id not in ADMIN_IDS: return
 
@@ -1017,7 +976,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "admin_stats":
         today = datetime.now().strftime("%Y-%m-%d")
         
-
         total_today = db.execute("SELECT COUNT(*) FROM otp_stats WHERE timestamp >= datetime('now', 'start of day')").fetchone()[0]
         total_week = db.execute("SELECT COUNT(*) FROM otp_stats WHERE timestamp >= datetime('now', '-7 days')").fetchone()[0]
         total_month = db.execute("SELECT COUNT(*) FROM otp_stats WHERE timestamp >= datetime('now', '-30 days')").fetchone()[0]
@@ -1064,16 +1022,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(kb)
         )
         return
-        
 
     if data == "admin_backup":
         await query.message.reply_text("⏳ Preparing Backup...")
         memory_file = io.BytesIO()
         
         # Daftar file yang WAJIB masuk
-        target_files = ['bot.py', 'numbers.db', 'requirements.txt']
+        target_files = ['main.py', 'numbers.db', 'requirements.txt']
         # Daftar folder yang HARUS dibuang
-        exclude_dirs = {'.git', '__pycache__', '.cache', '.local', 'venv'}
+        exclude_dirs = {'.git', '__pycache__', '.cache', '.local', 'venv', '.env'}
 
         try:
             with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
@@ -1083,7 +1040,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     
                     for file in files:
                         # Masukkan file jika ada di target_files atau berakhiran .py/.txt/.db
-                        # Tapi tetap selektif agar tidak memasukkan sampah
                         if file in target_files or file.endswith(('.py', '.db', '.txt')):
                             file_path = os.path.join(root, file)
                             # Ambil path relatif agar struktur zip rapi
@@ -1094,22 +1050,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             timestamp = datetime.now().strftime("%Y%m%d_%H%M")
             await query.message.reply_document(
                 document=memory_file, 
-                filename=f"Edogawa_Backup_{timestamp}.zip",
-                caption="✅ Backup Complete!\nThis your backup."
+                filename=f"BotBackup_{timestamp}.zip",
+                caption="✅ Backup Complete!"
             )
         except Exception as e:
-            await query.message.reply_text(f"❌ Gagal backup: {e}")
+            await query.message.reply_text(f"❌ Backup Failed: {e}")
         return
 
     if data == "admin_restart":
         await query.message.edit_text("🔄 The bot is restarting... Wait a moment.")
-        # Tutup koneksi DB sebelum restart biar gak corrupt
+        # Tutup koneksi DB sebelum restart
         try:
-            db._connection.close()
+            if db._connection:
+                db._connection.close()
         except:
             pass
         os.execv(sys.executable, [sys.executable] + sys.argv)
-        
 
     if data == "admin_remove_numbers":
         kb = []
@@ -1126,8 +1082,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await admin_panel(update, context)
         return
 
-    # --- STATE BASED INPUTS (Add Numbers, Broadcast, Settings) ---
-    
     if data == "admin_add_numbers":
         USER_STATE[user_id] = "WAITING_COUNTRY_NAME"
         await query.message.reply_text("🌍 Enter country name (Ex: United Kingdom):")
@@ -1155,7 +1109,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 async def text_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # PENGAMAN 1: Pastikan update.message tidak None (penting!)
     if not update.message or not update.message.text:
         return
 
@@ -1171,7 +1124,7 @@ async def text_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # --- Admin Logic ---
     if user_id in ADMIN_IDS:
         if state == "WAITING_COUNTRY_NAME":
-            USER_STATE[user_id] = f"WAITING_FILE_{text}" # Store country in state key
+            USER_STATE[user_id] = f"WAITING_FILE_{text}"
             await update.message.reply_text(f"📤 Country: {text}\nNow send the .txt/.csv/.xlsx file.")
             return
         
@@ -1186,7 +1139,7 @@ async def text_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 except: pass
                 await asyncio.sleep(0.05)
             await update.message.reply_text(f"✅ Sent to {count} users.")
-            del USER_STATE[user_id]
+            if user_id in USER_STATE: del USER_STATE[user_id]
             return
 
         if state == "WAITING_FIND_NUMBER":
@@ -1195,14 +1148,14 @@ async def text_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             res = db.execute("SELECT * FROM numbers WHERE number = ?", (num,)).fetchone()
             msg = f"Info: {dict(res)}" if res else "Not found."
             await update.message.reply_text(msg)
-            del USER_STATE[user_id]
+            if user_id in USER_STATE: del USER_STATE[user_id]
             return
 
         if state in ["set_main", "set_otp"]:
             if state == "set_main": update_channel_settings(main=text)
             elif state == "set_otp": update_channel_settings(otp=text)
             await update.message.reply_text("✅ Updated!")
-            del USER_STATE[user_id]
+            if user_id in USER_STATE: del USER_STATE[user_id]
             return
 
 async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1242,23 +1195,8 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"File error: {e}")
             await update.message.reply_text("❌ Error processing file.")
         
-        del USER_STATE[user_id]
+        if user_id in USER_STATE: del USER_STATE[user_id]
 
-async def command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    cmd = update.message.text.split()[0]
-    user_id = update.effective_user.id
-
-    if cmd == '/backup' and user_id in ADMIN_IDS:
-        await admin_panel(update, context) # Shortcut to panel action
-    
-    if cmd == '/push' and user_id in ADMIN_IDS:
-        set_bot_status(False)
-        await update.message.reply_text("✅ Maintenance ON.")
-        
-    if cmd == '/on' and user_id in ADMIN_IDS:
-        set_bot_status(True)
-        await update.message.reply_text("✅ Bot Online.")
-        
 async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     res = db.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,)).fetchone()
@@ -1279,7 +1217,7 @@ async def reff_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_username = (await context.bot.get_me()).username
     link = f"https://t.me/{bot_username}?start={user_id}"
     await update.message.reply_text(f"🔗 <b>Your Referral Link:</b>\n<code>{link}</code>", parse_mode=ParseMode.HTML)
-    
+
 async def sent_messages(session, username, already_sent, base_url):
     data = fetch_data(session, base_url)
 
@@ -1288,38 +1226,42 @@ async def sent_messages(session, username, already_sent, base_url):
         
     elif data and 'aaData' in data:
         for row in data['aaData']:
-            dt, rc, sn, msg = str(row[0]), str(row[2]), str(row[3]), str(row[4])
-            
-            match = re.search(r'\d{3}-\d{3}|\d{4,8}', msg)
-            otp = match.group() if match else None
+            try:
+                dt, rc, sn, msg = str(row[0]), str(row[2]), str(row[3]), str(row[4])
+                
+                match = re.search(r'\d{3}-\d{3}|\d{4,8}', msg)
+                otp = match.group() if match else None
 
-            if otp:
-                sms_hash = hashlib.md5(f"{dt}{rc}{msg}".encode()).hexdigest()
-                
-                # Cek DB & Cache
-                with db._lock:
-                    check = db.execute("SELECT hash FROM public_sms_history WHERE hash=?", (sms_hash,)).fetchone()
-                    if check or sms_hash in already_sent: continue
-                    record_traffic(rc, sn, msg) 
-                # Ambil settings
-                _, _, _, otp_ch = get_channel_settings()
-                
-                # Format Public
-                clean_rc = re.sub(r'\D', '', rc)
-                masked = f"+{clean_rc[:5]}RILZ{clean_rc[-4:]}"
-                text, markup = format_public_message(rc, sn, msg, otp, dt, masked)
+                if otp:
+                    sms_hash = hashlib.md5(f"{dt}{rc}{msg}".encode()).hexdigest()
+                    
+                    # Cek DB & Cache
+                    with db._lock:
+                        check = db.execute("SELECT hash FROM public_sms_history WHERE hash=?", (sms_hash,)).fetchone()
+                        if check or sms_hash in already_sent: continue
+                        record_traffic(rc, sn, msg) 
+                    # Ambil settings
+                    _, _, _, otp_ch = get_channel_settings()
+                    
+                    # Format Public
+                    clean_rc = re.sub(r'\D', '', rc)
+                    masked = f"+{clean_rc[:5]}RILZ{clean_rc[-4:]}"
+                    text, markup = format_public_message(rc, sn, msg, otp, dt, masked)
 
-                # --- FIX: Pakai Bridge Function agar tidak crash Loop ---
-                send_async_message(otp_ch, text, parse_mode=ParseMode.HTML, reply_markup=markup, auto_delete=True)
-                
-                # Simpan History
-                already_sent.add(sms_hash)
-                with db._lock:
-                    db.execute("INSERT OR IGNORE INTO public_sms_history (hash, date_added) VALUES (?, ?)", (sms_hash, dt))
-                    db.commit()
-                
-                save_already_sent(username, already_sent)
-                logging.info(f"[{username}] [+] OTP Terkirim ke Channel: {otp}")
+                    # --- FIX: Pakai Bridge Function agar tidak crash Loop ---
+                    send_async_message(otp_ch, text, parse_mode=ParseMode.HTML, reply_markup=markup, auto_delete=True)
+                    
+                    # Simpan History
+                    already_sent.add(sms_hash)
+                    with db._lock:
+                        db.execute("INSERT OR IGNORE INTO public_sms_history (hash, date_added) VALUES (?, ?)", (sms_hash, dt))
+                        db.commit()
+                    
+                    save_already_sent(username, already_sent)
+                    logging.info(f"[{username}] [+] OTP Sent: {otp}")
+            except Exception as e:
+                logger.error(f"Error processing SMS: {e}")
+                continue
     return None
 
 async def worker(account):
@@ -1333,41 +1275,36 @@ async def worker(account):
 
     while True:
         try:
-            # Login ke URL spesifik akun
             if await login(session, username, password, base_url):
-                logging.info(f"✅ [{username}] Login Sukses di {base_url}")
+                logging.info(f"✅ [{username}] Login Successful")
                 while True:
                     result = await sent_messages(session, username, already_sent, base_url)
                     if result == "relogin": break
                     await asyncio.sleep(15)
             else:
-                logging.error(f"❌ [{username}] Login Gagal di {base_url}. Retry 30s...")
+                logging.error(f"❌ [{username}] Login Failed. Retrying in 30s...")
                 await asyncio.sleep(30)
         except Exception as e:
-            logging.error(f"⚠️ Error Worker {username}: {e}")
+            logging.error(f"⚠️ Worker {username} Error: {e}")
             await asyncio.sleep(10)
-
 
 async def main():
     logging.basicConfig(level=logging.INFO, format='%(message)s')
     tasks = [worker(account) for account in ACCOUNTS]
     await asyncio.gather(*tasks)
-        
 
 async def post_init(application):
-       global MAIN_LOOP
-       MAIN_LOOP = asyncio.get_running_loop()
-       logger.info("✅ Event Loop successfully captured via post_init!")
+    global MAIN_LOOP
+    MAIN_LOOP = asyncio.get_running_loop()
+    logger.info("✅ Event Loop successfully captured!")
 
 if __name__ == "__main__":
-    from telegram.request import HTTPXRequest
-    
-    t_request = HTTPXRequest(connect_timeout=60, read_timeout=60)
     db.init_db()
+    
     application = ApplicationBuilder().token(API_TOKEN).post_init(post_init).build()
     GLOBAL_APP = application
 
-    # 2. Handlers
+    # Handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("traffic", traffic_user_command))
     application.add_handler(CommandHandler("balance", balance_command))
@@ -1376,8 +1313,8 @@ if __name__ == "__main__":
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_input_handler))
     application.add_handler(MessageHandler(filters.Document.ALL, document_handler))
 
-    # 3. Threads
-    logger.info("🔥 Starting Background Threads...")
+    # Threads
+    logger.info("🔥 Starting Background Monitoring Threads...")
     
     threading.Thread(target=start_watching_sms_api, args=(URL_API_1, T1, "API_1", TYPE_API_1), daemon=True).start()
     threading.Thread(target=start_watching_sms_api, args=(URL_API_2, T2, "API_2", TYPE_API_2), daemon=True).start()
@@ -1390,6 +1327,7 @@ if __name__ == "__main__":
 
         t = threading.Thread(target=start_worker, args=(acc,), daemon=True)
         t.start()
-        logger.info(f"✅ Monitoring started for account: {acc['username']}")
-        print("🚀 rilzz chaniago Bot is now Online...")
+        logger.info(f"✅ Worker started for: {acc['username']}")
+    
+    print("🚀 Bot is now Online...")
     application.run_polling(drop_pending_updates=True)
