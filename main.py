@@ -102,7 +102,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-API_TOKEN = "8531523678:AAFXHiumK5Ho8dyuPneq7i_k_h8xFPl1jck"
+API_TOKEN = "8531523678:AAHjheVkifkKLa1LCxe3ot9FMeilA6RWSqA"
 ADMIN_IDS = [7500869913, 8365961338]
 
 # --- Api 1
