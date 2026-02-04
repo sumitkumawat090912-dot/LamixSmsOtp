@@ -91,7 +91,7 @@ PORT = int(os.environ.get('PORT', 8443))
 BOT_WEBHOOK_URL = os.environ.get('BOT_WEBHOOK_URL', '')
 
 # ---- Main Configuration ----
-BOT_NAME = "MaLiKoTpZoNe"
+BOT_NAME = "otp panel"
 DB_FILE = "numbers.db"
 
 # ---- Configure Logging ----
@@ -102,8 +102,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-API_TOKEN = "8531523678:AAHjheVkifkKLa1LCxe3ot9FMeilA6RWSqA"
-ADMIN_IDS = [7500869913, 8365961338]
+API_TOKEN = "8409322677:AAGvra5KQYXOH5ZNt9kSx7x42Lu5fjeZYtg"
+ADMIN_IDS = [8076046125, 8365961338]
 
 # --- Api 1
 T1 = "YOUR_PANEL_API"
@@ -136,13 +136,13 @@ ACCOUNTS = [
 ]
 
 # --- Default Channel Configuration ---
-DEFAULT_MAIN_CHANNEL = '@auroratechinc' # Use @
+DEFAULT_MAIN_CHANNEL = '@kumawakumm' # Use @
 DEFAULT_BACKUP_CHANNEL = 'https://t.me/mrafrixtech'
 DEFAULT_BACKUP_CHANNEL_LINK = 'https://t.me/auroratechinc'
 DEFAULT_OTP_CHANNEL = 'https://t.me/afrixotpgc'
 
 # --- Button Configuration ---
-BOT_LINK = "@auroraotpbot"
+BOT_LINK = "@OTP_PANELBOT"
 BUTTON_TEXT1 = "Number Channel 🚀"
 BUTTON_TEXT2 = "Panel Bot"
 
